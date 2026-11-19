@@ -56,7 +56,10 @@ final class EmptinessScene {
     private static final double REVEAL_ZONE_FACTOR = 1.35;
     private static final double MIN_PIXEL_RADIUS = 0.4;
     private static final int MAX_DEPTH = 24;
-    private static final int MAX_DRAWS = 12000;
+    // Maximal number of visible spheres considered per frame (drawn or decomposed into parts)
+    private static final int MAX_NODES = 12000;
+    // The reveal distance is temporarily reduced when the number of spheres gets close to the maximum
+    private static final double BUDGET_HIGH = 0.8 * MAX_NODES, BUDGET_LOW = 0.6 * MAX_NODES;
     private static final double HUE_SPREAD = 0.14;
 
     private final Canvas canvas;
@@ -88,7 +91,22 @@ final class EmptinessScene {
     private final double[] tmpPosition = new double[3], tmpQuat = new double[4];
     private final double[] view = new double[9]; // world -> view rotation
     private double camX, camY, camZ, sigma, lnInverseR, focalPixels, cosV, sinV, cosH, sinH;
-    private final double[][] matrices = new double[MAX_DEPTH + 2][9];
+    private final double[] cameraMatrix = new double[9];
+    private double budgetScale = 1, qInFrame, qOutFrame;
+
+    // Spheres considered in the current frame (visible ones only), processed from the biggest on screen to the
+    // smallest, so that if the budget is reached, only the smallest spheres are not decomposed into their parts.
+    private static final int NODE_CAPACITY = MAX_NODES + 256;
+    private final double[] nodeX = new double[NODE_CAPACITY], nodeY = new double[NODE_CAPACITY], nodeZ = new double[NODE_CAPACITY];
+    private final double[] nodeSize = new double[NODE_CAPACITY], nodeDistance = new double[NODE_CAPACITY], nodePixelRadius = new double[NODE_CAPACITY];
+    private final double[] nodeViewX = new double[NODE_CAPACITY], nodeViewY = new double[NODE_CAPACITY], nodeViewZ = new double[NODE_CAPACITY];
+    private final double[] nodeFog = new double[NODE_CAPACITY];
+    private final double[] nodeHue = new double[NODE_CAPACITY], nodeSaturation = new double[NODE_CAPACITY], nodeBrightness = new double[NODE_CAPACITY];
+    private final double[] nodeMatrix = new double[NODE_CAPACITY * 9];
+    private final int[] nodeSeed = new int[NODE_CAPACITY], nodeDepth = new int[NODE_CAPACITY];
+    private final boolean[] nodeOnChain = new boolean[NODE_CAPACITY], nodeInside = new boolean[NODE_CAPACITY];
+    private final int[] heap = new int[NODE_CAPACITY];
+    private int nodeCount, heapSize;
     private final double[] rgb = new double[3];
     private final double[] projection = new double[16];
 
@@ -339,7 +357,7 @@ final class EmptinessScene {
         }
         camX = cameraPosition[0]; camY = cameraPosition[1]; camZ = cameraPosition[2];
         // view = transpose(camera rotation)
-        double[] m = matrices[MAX_DEPTH + 1];
+        double[] m = cameraMatrix;
         Maths.quatToMatrix(cameraQuat, m);
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
@@ -375,14 +393,22 @@ final class EmptinessScene {
         // Collecting the spheres to draw
         opaqueCounts[0] = opaqueCounts[1] = opaqueCounts[2] = 0;
         transparentCount = drawCount = 0;
+        qOutFrame = qOut * budgetScale;
+        qInFrame = Math.min(qOutFrame * 0.9, Math.max(1.05, qIn * budgetScale));
+        nodeCount = heapSize = 0;
         if (ancestors.isEmpty()) {
-            Maths.identity(matrices[0]);
-            visit(0, 0, 0, 1, 0, false, rootSeed, rootHue, rootSaturation, rootBrightness);
+            consider(0, 0, 0, 1, IDENTITY, 0, 0, false, rootSeed, rootHue, rootSaturation, rootBrightness);
         } else {
             Frame top = ancestors.get(0);
-            System.arraycopy(top.m, 0, matrices[0], 0, 9);
-            visit(top.x, top.y, top.z, top.size, 0, true, top.seed, top.hue, top.saturation, top.brightness);
+            consider(top.x, top.y, top.z, top.size, top.m, 0, 0, true, top.seed, top.hue, top.saturation, top.brightness);
         }
+        while (heapSize > 0)
+            process(popNode());
+        // Adapting the reveal distance to the budget (smoothly, so it is not noticeable)
+        if (nodeCount > BUDGET_HIGH)
+            budgetScale = Math.max(0.25, budgetScale * 0.97);
+        else if (nodeCount < BUDGET_LOW && budgetScale < 1)
+            budgetScale = Math.min(1, budgetScale * 1.01);
 
         // Drawing them
         gl.viewport(0, 0, width, height);
@@ -430,14 +456,16 @@ final class EmptinessScene {
         }
     }
 
-    // Recursively collects the sphere (center, size and rotation matrices[depth] in root coordinates) and/or its parts.
-    // The ancestors of the root (onChain and depth < ancestors count) are always decomposed into their parts, as the
-    // camera is (or is about to be) inside them.
-    private void visit(double x, double y, double z, double size, int depth, boolean onChain, int seed, double hue, double saturation, double brightness) {
+    // Registers a sphere (center, size and rotation matrix in root coordinates) if it is visible, and queues it by its
+    // size on screen. The ancestors of the root (onChain and depth < ancestors count) are always decomposed into their
+    // parts, as the camera is (or is about to be) inside them.
+    private void consider(double x, double y, double z, double size, double[] m, int mOffset, int depth, boolean onChain,
+                          int seed, double hue, double saturation, double brightness) {
+        if (nodeCount >= NODE_CAPACITY)
+            return;
         double dx = x - camX, dy = y - camY, dz = z - camZ;
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        Frame ancestor = onChain && depth < ancestors.size() ? ancestors.get(depth) : null;
-        boolean inside = ancestor != null || distance < size;
+        boolean inside = onChain && depth < ancestors.size() || distance < size;
         double[] v = view;
         double vx = v[0] * dx + v[1] * dy + v[2] * dz;
         double vy = v[3] * dx + v[4] * dy + v[5] * dz;
@@ -456,36 +484,100 @@ final class EmptinessScene {
         double fog = 1 - Maths.smoothstep((level - FOG_START) / (FOG_END - FOG_START));
         if (fog <= 0.002 && !inside)
             return;
+        int k = nodeCount++;
+        nodeX[k] = x; nodeY[k] = y; nodeZ[k] = z; nodeSize[k] = size;
+        nodeDistance[k] = distance; nodePixelRadius[k] = pixelRadius;
+        nodeViewX[k] = vx; nodeViewY[k] = vy; nodeViewZ[k] = vz;
+        nodeFog[k] = fog; nodeInside[k] = inside; nodeOnChain[k] = onChain; nodeDepth[k] = depth;
+        nodeSeed[k] = seed; nodeHue[k] = hue; nodeSaturation[k] = saturation; nodeBrightness[k] = brightness;
+        System.arraycopy(m, mOffset, nodeMatrix, k * 9, 9);
+        pushNode(k);
+    }
+
+    // Draws the sphere and/or decomposes it into its parts
+    private void process(int k) {
+        double size = nodeSize[k], distance = nodeDistance[k];
+        boolean inside = nodeInside[k];
+        int depth = nodeDepth[k];
         // How much this sphere is decomposed into its parts (0 = simple sphere, 1 = only parts)
-        double composite = inside ? 1 : Maths.clamp01((qOut - distance / size) / (qOut - qIn));
-        if (depth >= MAX_DEPTH || drawCount >= MAX_DRAWS) {
+        double composite = inside ? 1 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+        SphereLayout layout = layoutOf(nodeSeed[k]);
+        if (composite > 0 && (depth >= MAX_DEPTH || nodeCount + layout.n > NODE_CAPACITY)) {
             if (inside)
                 return;
             composite = 0;
         }
         if (composite < 1) {
-            double alpha = (1 - Maths.smoothstep(composite)) * fog;
+            double alpha = (1 - Maths.smoothstep(composite)) * nodeFog[k];
             if (alpha > 0.002) {
-                Maths.hsbToRgb(hue, saturation, brightness, rgb);
+                Maths.hsbToRgb(nodeHue[k], nodeSaturation[k], nodeBrightness[k], rgb);
+                double pixelRadius = nodePixelRadius[k];
                 int meshIndex = pixelRadius < 10 ? 0 : pixelRadius < 90 ? 1 : 2;
-                addDraw(meshIndex, vx, vy, vz, size, alpha, distance);
+                addDraw(meshIndex, nodeViewX[k], nodeViewY[k], nodeViewZ[k], size, alpha, distance);
             }
         }
         if (composite > 0) {
-            SphereLayout layout = layoutOf(seed);
-            double[] m = matrices[depth], cm = matrices[depth + 1];
+            double x = nodeX[k], y = nodeY[k], z = nodeZ[k];
+            int seed = nodeSeed[k];
+            double hue = nodeHue[k], saturation = nodeSaturation[k], brightness = nodeBrightness[k];
+            Frame ancestor = nodeOnChain[k] && depth < ancestors.size() ? ancestors.get(depth) : null;
+            double[] m = partMatrix, nm = nodeMatrix;
+            int o = k * 9;
             double partSize = size * layout.r;
             for (int i = 0; i < layout.n; i++) {
                 double lx = layout.cx[i], ly = layout.cy[i], lz = layout.cz[i];
-                double px = x + size * (m[0] * lx + m[1] * ly + m[2] * lz);
-                double py = y + size * (m[3] * lx + m[4] * ly + m[5] * lz);
-                double pz = z + size * (m[6] * lx + m[7] * ly + m[8] * lz);
-                Maths.matMul(m, layout.rot[i], cm);
+                double px = x + size * (nm[o] * lx + nm[o + 1] * ly + nm[o + 2] * lz);
+                double py = y + size * (nm[o + 3] * lx + nm[o + 4] * ly + nm[o + 5] * lz);
+                double pz = z + size * (nm[o + 6] * lx + nm[o + 7] * ly + nm[o + 8] * lz);
+                double[] r = layout.rot[i];
+                for (int row = 0; row < 3; row++) {
+                    double a0 = nm[o + 3 * row], a1 = nm[o + 3 * row + 1], a2 = nm[o + 3 * row + 2];
+                    m[3 * row]     = a0 * r[0] + a1 * r[3] + a2 * r[6];
+                    m[3 * row + 1] = a0 * r[1] + a1 * r[4] + a2 * r[7];
+                    m[3 * row + 2] = a0 * r[2] + a1 * r[5] + a2 * r[8];
+                }
                 int partSeed = Maths.hash(seed, i);
-                visit(px, py, pz, partSize, depth + 1, ancestor != null && i == ancestor.childIndex, partSeed,
+                consider(px, py, pz, partSize, m, 0, depth + 1, ancestor != null && i == ancestor.childIndex, partSeed,
                         childHue(hue, partSeed), childSaturation(saturation, partSeed), childBrightness(brightness, partSeed));
             }
         }
+    }
+
+    private final double[] partMatrix = new double[9];
+    private static final double[] IDENTITY = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+
+    // Max-heap on the size on screen
+    private void pushNode(int k) {
+        int i = heapSize++;
+        double p = nodePixelRadius[k];
+        while (i > 0) {
+            int parent = (i - 1) >> 1;
+            if (nodePixelRadius[heap[parent]] >= p)
+                break;
+            heap[i] = heap[parent];
+            i = parent;
+        }
+        heap[i] = k;
+    }
+
+    private int popNode() {
+        int top = heap[0];
+        int last = heap[--heapSize];
+        double p = nodePixelRadius[last];
+        int i = 0;
+        while (true) {
+            int child = 2 * i + 1;
+            if (child >= heapSize)
+                break;
+            if (child + 1 < heapSize && nodePixelRadius[heap[child + 1]] > nodePixelRadius[heap[child]])
+                child++;
+            if (nodePixelRadius[heap[child]] <= p)
+                break;
+            heap[i] = heap[child];
+            i = child;
+        }
+        heap[i] = last;
+        return top;
     }
 
     private void addDraw(int meshIndex, double vx, double vy, double vz, double size, double alpha, double distance) {

@@ -69,10 +69,11 @@ final class EmptinessScene {
     private SphereMesh[] meshes; // low, medium & high tessellation
 
     // Settings
-    private int partsCount = 80;
-    private double revealDistance = 6, qIn, qOut;
-    private double speed = 0.07; // zoom cycles per second
-    private double hueVariety = 0.3; // maximal hue difference between parts of a same sphere (in turns of the color wheel)
+    // Initial settings = middle of each slider range in EmptinessApplication
+    private int partsCount = 124;
+    private double revealDistance = 6.8, qIn, qOut;
+    private double speed = 0.25; // zoom cycles per second
+    private double hueVariety = 0.5; // maximal hue difference between parts of a same sphere (in turns of the color wheel)
     private boolean paused;
 
     // Zoom state

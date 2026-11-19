@@ -3,6 +3,7 @@
 module webfx.demo.emptiness.application {
 
     // Direct dependencies modules
+    requires javafx.base;
     requires javafx.controls;
     requires javafx.graphics;
     requires webfx.kit.webgl;

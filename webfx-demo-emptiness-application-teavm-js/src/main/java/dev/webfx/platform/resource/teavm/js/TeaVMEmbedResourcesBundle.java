@@ -9,6 +9,7 @@ public final class TeaVMEmbedResourcesBundle extends TeaVMResourceBundle impleme
     private static final String[] RESOURCE_PATHS = {
         "dev/webfx/demo/emptiness/sphereFragmentShader.glsl",
         "dev/webfx/demo/emptiness/sphereVertexShader.glsl",
+        "dev/webfx/demo/emptiness/stemVertexShader.glsl",
         "dev/webfx/platform/meta/exe/exe.properties"
     };
 

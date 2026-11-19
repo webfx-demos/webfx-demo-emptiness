@@ -67,6 +67,10 @@ final class EmptinessScene {
     private int aPosition;
     private WebGLUniformLocation uProjection, uSphere, uColor, uLightDirection;
     private SphereMesh[] meshes; // low, medium & high tessellation
+    private WebGLProgram stemProgram;
+    private int aStemPosition;
+    private WebGLUniformLocation uStemProjection, uStemStart, uStemEnd, uStemColor, uStemColorEnd, uStemLightDirection;
+    private StemMesh[] stemMeshes; // low & high tessellation
 
     // Settings
     // Initial settings = middle of each slider range in EmptinessApplication
@@ -74,6 +78,9 @@ final class EmptinessScene {
     private double revealDistance = 6.8, qIn, qOut;
     private double speed = 0.25; // zoom cycles per second
     private double hueVariety = 0.5; // maximal hue difference between parts of a same sphere (in turns of the color wheel)
+    private double spacing = 0.5; // 0 = parts tightly packed, 1 = sparse (see SphereLayout)
+    private boolean showStems; // stems hidden by default
+    private double stemThickness = 0.5; // 0 = no stems, 1 = stem radius = 40% of the sphere radius
     private boolean paused;
 
     // Zoom state
@@ -111,14 +118,22 @@ final class EmptinessScene {
     private final double[] rgb = new double[3];
     private final double[] projection = new double[16];
 
-    // Draw lists: 8 doubles per draw (view x, y, z, radius, r, g, b, alpha)
+    // Draw lists, DRAW_STRIDE doubles per draw:
+    // - sphere: view x, y, z, radius, r, g, b, alpha
+    // - stem: start view x, y, z, radius, r, g, b, alpha, end view x, y, z, end r, g, b
+    private static final int DRAW_STRIDE = 16;
     private final double[][] opaqueDraws = new double[3][];
     private final int[] opaqueCounts = new int[3];
-    private double[] transparentDraws = new double[8 * 256];
-    private int[] transparentMeshes = new int[256];
+    private final double[][] opaqueStemDraws = new double[2][];
+    private final int[] opaqueStemCounts = new int[2];
+    private double[] transparentDraws = new double[DRAW_STRIDE * 256];
+    private int[] transparentMeshes = new int[256]; // mesh index for spheres, -1 - mesh index for stems
     private double[] transparentDistances = new double[256];
     private int[] transparentOrder = new int[256];
-    private int transparentCount, drawCount;
+    private int transparentCount, drawCount, stemDrawCount;
+    // Positions & colors of the parts of the sphere being decomposed (for its stems)
+    private double[] partX = new double[0], partY = new double[0], partZ = new double[0];
+    private double[] partR = new double[0], partG = new double[0], partB = new double[0];
 
     private static final class Frame {
         double x, y, z, size;
@@ -149,7 +164,23 @@ final class EmptinessScene {
                 new SphereMesh(gl, 56, 38),
         };
         for (int i = 0; i < 3; i++)
-            opaqueDraws[i] = new double[8 * 1024];
+            opaqueDraws[i] = new double[DRAW_STRIDE * 1024];
+        stemProgram = initShaderProgram(
+                Resource.getText(Resource.toUrl("stemVertexShader.glsl", getClass())),
+                Resource.getText(Resource.toUrl("sphereFragmentShader.glsl", getClass())));
+        aStemPosition = gl.getAttribLocation(stemProgram, "aPosition");
+        uStemProjection = gl.getUniformLocation(stemProgram, "uProjection");
+        uStemStart = gl.getUniformLocation(stemProgram, "uStart");
+        uStemEnd = gl.getUniformLocation(stemProgram, "uEnd");
+        uStemColor = gl.getUniformLocation(stemProgram, "uColor");
+        uStemColorEnd = gl.getUniformLocation(stemProgram, "uColorEnd");
+        uStemLightDirection = gl.getUniformLocation(stemProgram, "uLightDirection");
+        stemMeshes = new StemMesh[] {
+                new StemMesh(gl, 6),
+                new StemMesh(gl, 18),
+        };
+        for (int i = 0; i < 2; i++)
+            opaqueStemDraws[i] = new double[DRAW_STRIDE * 1024];
         setRevealDistance(revealDistance);
         restart();
     }
@@ -167,6 +198,17 @@ final class EmptinessScene {
     void setPartsCount(int partsCount) {
         if (partsCount != this.partsCount) {
             this.partsCount = partsCount;
+            restart();
+        }
+    }
+
+    double getSpacing() {
+        return spacing;
+    }
+
+    void setSpacing(double spacing) {
+        if (spacing != this.spacing) {
+            this.spacing = spacing;
             restart();
         }
     }
@@ -197,6 +239,26 @@ final class EmptinessScene {
         this.hueVariety = hueVariety;
     }
 
+    boolean isShowStems() {
+        return showStems;
+    }
+
+    void setShowStems(boolean showStems) {
+        this.showStems = showStems;
+    }
+
+    double getStemThickness() {
+        return stemThickness;
+    }
+
+    void setStemThickness(double stemThickness) {
+        this.stemThickness = stemThickness;
+    }
+
+    int getStemDrawCount() {
+        return stemDrawCount;
+    }
+
     void togglePause() {
         paused = !paused;
     }
@@ -215,8 +277,10 @@ final class EmptinessScene {
         layouts = new SphereLayout[LAYOUT_COUNT];
         long layoutSeed = random.nextLong();
         for (int i = 0; i < LAYOUT_COUNT; i++)
-            layouts[i] = new SphereLayout(partsCount, layoutSeed + i);
+            layouts[i] = new SphereLayout(partsCount, spacing, layoutSeed + i);
         lnInverseR = Math.log(1 / layouts[0].r);
+        partX = new double[partsCount]; partY = new double[partsCount]; partZ = new double[partsCount];
+        partR = new double[partsCount]; partG = new double[partsCount]; partB = new double[partsCount];
         rootSeed = random.nextInt();
         rootHue = random.nextDouble();
         rootSaturation = 0.6;
@@ -239,7 +303,7 @@ final class EmptinessScene {
     // the other parts on its way, and should see the target unobstructed at the end.
     private ZoomPath choosePath(SphereLayout layout) {
         int n = layout.n;
-        double r = layout.r, clearance2 = (1.2 * r) * (1.2 * r);
+        double r = layout.r, clearance2 = (1.2 * r) * (1.2 * r), stemClearance2 = (0.6 * r) * (0.6 * r);
         List<ZoomPath> valid = new ArrayList<>(), validFront = new ArrayList<>();
         ZoomPath best = null;
         int bestViolations = Integer.MAX_VALUE;
@@ -255,6 +319,11 @@ final class EmptinessScene {
                         if (dx * dx + dy * dy + dz * dz < clearance2)
                             violations++;
                     }
+                }
+                // Not going through a stem either (the thickest stem is 0.4 r)
+                for (int b = 0; b < layout.stemA.length; b++) {
+                    if (distanceToSegment2(p, layout, layout.stemA[b], layout.stemB[b]) < stemClearance2)
+                        violations++;
                 }
             }
             // End position: nothing between the camera and the target
@@ -280,6 +349,15 @@ final class EmptinessScene {
         }
         List<ZoomPath> candidates = !validFront.isEmpty() ? validFront : valid;
         return candidates.isEmpty() ? best : candidates.get(random.nextInt(candidates.size()));
+    }
+
+    // Squared distance from the point p to the segment between the parts a and b of the layout
+    private static double distanceToSegment2(double[] p, SphereLayout layout, int a, int b) {
+        double ax = layout.cx[a], ay = layout.cy[a], az = layout.cz[a];
+        double ex = layout.cx[b] - ax, ey = layout.cy[b] - ay, ez = layout.cz[b] - az;
+        double t = Maths.clamp01(((p[0] - ax) * ex + (p[1] - ay) * ey + (p[2] - az) * ez) / (ex * ex + ey * ey + ez * ez));
+        double dx = ax + t * ex - p[0], dy = ay + t * ey - p[1], dz = az + t * ez - p[2];
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private void advance(double deltaS) {
@@ -401,7 +479,8 @@ final class EmptinessScene {
 
         // Collecting the spheres to draw
         opaqueCounts[0] = opaqueCounts[1] = opaqueCounts[2] = 0;
-        transparentCount = drawCount = 0;
+        opaqueStemCounts[0] = opaqueStemCounts[1] = 0;
+        transparentCount = drawCount = stemDrawCount = 0;
         qOutFrame = qOut * budgetScale;
         qInFrame = Math.min(qOutFrame * 0.9, Math.max(1.05, qIn * budgetScale));
         nodeCount = heapSize = 0;
@@ -413,10 +492,11 @@ final class EmptinessScene {
         }
         while (heapSize > 0)
             process(popNode());
-        // Adapting the reveal distance to the budget (smoothly, so it is not noticeable)
-        if (nodeCount > BUDGET_HIGH)
+        // Adapting the reveal distance to the budget (smoothly, so it is not noticeable). A stem costs about half a sphere.
+        double budgetUsage = nodeCount + 0.5 * stemDrawCount;
+        if (budgetUsage > BUDGET_HIGH)
             budgetScale = Math.max(0.25, budgetScale * 0.97);
-        else if (nodeCount < BUDGET_LOW && budgetScale < 1)
+        else if (budgetUsage < BUDGET_LOW && budgetScale < 1)
             budgetScale = Math.min(1, budgetScale * 1.01);
 
         // Drawing them
@@ -429,10 +509,14 @@ final class EmptinessScene {
         gl.cullFace(gl.BACK);
         gl.depthMask(true);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.useProgram(stemProgram);
+        gl.uniformMatrix4fv(uStemProjection, false, projection);
+        gl.uniform3f(uStemLightDirection, -0.45, 0.55, 0.70);
         gl.useProgram(program);
         gl.uniformMatrix4fv(uProjection, false, projection);
         gl.uniform3f(uLightDirection, -0.45, 0.55, 0.70);
         gl.enableVertexAttribArray(aPosition);
+        boolean stemProgramInUse = false;
 
         // 1) Opaque spheres
         gl.disable(gl.BLEND);
@@ -442,27 +526,76 @@ final class EmptinessScene {
                 continue;
             SphereMesh mesh = bindMesh(meshIndex);
             double[] d = opaqueDraws[meshIndex];
-            for (int i = 0, o = 0; i < count; i++, o += 8)
+            for (int i = 0, o = 0; i < count; i++, o += DRAW_STRIDE)
                 drawSphere(mesh, d, o);
         }
+        // 2) Opaque stems
+        for (int meshIndex = 0; meshIndex < 2; meshIndex++) {
+            int count = opaqueStemCounts[meshIndex];
+            if (count == 0)
+                continue;
+            if (!stemProgramInUse)
+                stemProgramInUse = useStemProgram(true);
+            StemMesh mesh = bindStemMesh(meshIndex);
+            double[] d = opaqueStemDraws[meshIndex];
+            for (int i = 0, o = 0; i < count; i++, o += DRAW_STRIDE)
+                drawStem(mesh, d, o);
+        }
 
-        // 2) Dissolving (or fogged) spheres, from back to front
+        // 3) Dissolving (or fogged) spheres and stems, from back to front
         if (transparentCount > 0) {
             sortTransparentDraws();
             gl.enable(gl.BLEND);
             gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
             gl.depthMask(false);
-            int boundMesh = -1;
-            SphereMesh mesh = null;
+            int boundMesh = Integer.MIN_VALUE;
+            SphereMesh sphereMesh = null;
+            StemMesh stemMesh = null;
             for (int i = 0; i < transparentCount; i++) {
                 int index = transparentOrder[i];
-                if (transparentMeshes[index] != boundMesh)
-                    mesh = bindMesh(boundMesh = transparentMeshes[index]);
-                drawSphere(mesh, transparentDraws, index * 8);
+                int meshCode = transparentMeshes[index];
+                boolean stem = meshCode < 0;
+                if (stem != stemProgramInUse) {
+                    stemProgramInUse = useStemProgram(stem);
+                    boundMesh = Integer.MIN_VALUE;
+                }
+                if (meshCode != boundMesh) {
+                    boundMesh = meshCode;
+                    if (stem)
+                        stemMesh = bindStemMesh(-1 - meshCode);
+                    else
+                        sphereMesh = bindMesh(meshCode);
+                }
+                if (stem)
+                    drawStem(stemMesh, transparentDraws, index * DRAW_STRIDE);
+                else
+                    drawSphere(sphereMesh, transparentDraws, index * DRAW_STRIDE);
             }
             gl.depthMask(true);
             gl.disable(gl.BLEND);
         }
+        if (stemProgramInUse)
+            useStemProgram(false);
+    }
+
+    // Switches between the sphere program (false) and the stem program (true), returns the argument
+    private boolean useStemProgram(boolean stem) {
+        if (stem) {
+            gl.useProgram(stemProgram);
+            gl.enableVertexAttribArray(aStemPosition);
+        } else {
+            gl.useProgram(program);
+            gl.enableVertexAttribArray(aPosition);
+        }
+        return stem;
+    }
+
+    // Returns true if a ball (center in view space, radius) is entirely outside the view
+    private boolean isOutsideView(double vx, double vy, double vz, double radius) {
+        double forward = -vz;
+        return forward < -radius // behind the camera
+                || Math.abs(vy) * cosV - forward * sinV > radius // above or below the view
+                || Math.abs(vx) * cosH - forward * sinH > radius; // left or right of the view
     }
 
     // Registers a sphere (center, size and rotation matrix in root coordinates) if it is visible, and queues it by its
@@ -480,14 +613,9 @@ final class EmptinessScene {
         double vy = v[3] * dx + v[4] * dy + v[5] * dz;
         double vz = v[6] * dx + v[7] * dy + v[8] * dz;
         double pixelRadius = inside ? Double.MAX_VALUE : size * focalPixels / distance;
-        if (!inside) {
-            double forward = -vz;
-            if (forward < -size // behind the camera
-                    || Math.abs(vy) * cosV - forward * sinV > size // above or below the view
-                    || Math.abs(vx) * cosH - forward * sinH > size // left or right of the view
-                    || pixelRadius < MIN_PIXEL_RADIUS) // too small to be seen (and so are its parts)
-                return;
-        }
+        if (!inside && (isOutsideView(vx, vy, vz, size)
+                || pixelRadius < MIN_PIXEL_RADIUS)) // too small to be seen (and so are its parts)
+            return;
         // Level fog (spheres much bigger than the current scale fade out)
         double level = Math.log(size / sigma) / lnInverseR;
         double fog = 1 - Maths.smoothstep((level - FOG_START) / (FOG_END - FOG_START));
@@ -546,9 +674,73 @@ final class EmptinessScene {
                     m[3 * row + 2] = a0 * r[2] + a1 * r[5] + a2 * r[8];
                 }
                 int partSeed = Maths.hash(seed, i);
+                double partHue = childHue(hue, partSeed), partSaturation = childSaturation(saturation, partSeed), partBrightness = childBrightness(brightness, partSeed);
                 consider(px, py, pz, partSize, m, 0, depth + 1, ancestor != null && i == ancestor.childIndex, partSeed,
-                        childHue(hue, partSeed), childSaturation(saturation, partSeed), childBrightness(brightness, partSeed));
+                        partHue, partSaturation, partBrightness);
+                if (showStems && stemThickness > 0) {
+                    partX[i] = px; partY[i] = py; partZ[i] = pz;
+                    Maths.hsbToRgb(partHue, partSaturation, partBrightness, rgb);
+                    partR[i] = rgb[0]; partG[i] = rgb[1]; partB[i] = rgb[2];
+                }
             }
+            if (showStems && stemThickness > 0)
+                addStems(layout, partSize);
+        }
+    }
+
+    // Collects the stems between the parts (positions & colors in partX... arrays) of the sphere being decomposed
+    private void addStems(SphereLayout layout, double partSize) {
+        double level = Math.log(partSize / sigma) / lnInverseR;
+        double fog = 1 - Maths.smoothstep((level - FOG_START) / (FOG_END - FOG_START)); // same fog as the parts
+        if (fog <= 0.002)
+            return;
+        double radius = partSize * stemThickness * 0.4;
+        double[] v = view;
+        int[] stemA = layout.stemA, stemB = layout.stemB;
+        for (int k = 0; k < stemA.length; k++) {
+            if (nodeCount + 0.5 * stemDrawCount > NODE_CAPACITY)
+                return;
+            int i = stemA[k], j = stemB[k];
+            double ax = partX[i] - camX, ay = partY[i] - camY, az = partZ[i] - camZ;
+            double bx = partX[j] - camX, by = partY[j] - camY, bz = partZ[j] - camZ;
+            double mx = (ax + bx) / 2, my = (ay + by) / 2, mz = (az + bz) / 2;
+            double hx = (bx - ax) / 2, hy = (by - ay) / 2, hz = (bz - az) / 2;
+            double halfLength = Math.sqrt(hx * hx + hy * hy + hz * hz);
+            double distance = Math.sqrt(mx * mx + my * my + mz * mz);
+            if (distance > halfLength + radius && radius * focalPixels / (distance - halfLength) < 0.3) // too thin to be seen
+                continue;
+            double vmx = v[0] * mx + v[1] * my + v[2] * mz;
+            double vmy = v[3] * mx + v[4] * my + v[5] * mz;
+            double vmz = v[6] * mx + v[7] * my + v[8] * mz;
+            if (isOutsideView(vmx, vmy, vmz, halfLength + radius))
+                continue;
+            // The stem dissolves with its parts (when they dissolve into their own parts)
+            double alpha = fog * (1 - Maths.smoothstep(Math.max(compositeAt(ax, ay, az, partSize), compositeAt(bx, by, bz, partSize))));
+            if (alpha <= 0.002)
+                continue;
+            double pixelRadius = radius * focalPixels / Math.max(distance - halfLength, 1e-9);
+            int meshIndex = pixelRadius < 3 ? 0 : 1;
+            double[] d;
+            int o;
+            if (alpha >= 0.998) {
+                o = opaqueStemCounts[meshIndex]++ * DRAW_STRIDE;
+                d = opaqueStemDraws[meshIndex];
+                if (o + DRAW_STRIDE > d.length)
+                    d = opaqueStemDraws[meshIndex] = grow(d);
+            } else {
+                o = newTransparentDraw(-1 - meshIndex, distance);
+                d = transparentDraws;
+            }
+            d[o] = v[0] * ax + v[1] * ay + v[2] * az;
+            d[o + 1] = v[3] * ax + v[4] * ay + v[5] * az;
+            d[o + 2] = v[6] * ax + v[7] * ay + v[8] * az;
+            d[o + 3] = radius;
+            d[o + 4] = partR[i]; d[o + 5] = partG[i]; d[o + 6] = partB[i]; d[o + 7] = alpha;
+            d[o + 8] = v[0] * bx + v[1] * by + v[2] * bz;
+            d[o + 9] = v[3] * bx + v[4] * by + v[5] * bz;
+            d[o + 10] = v[6] * bx + v[7] * by + v[8] * bz;
+            d[o + 11] = partR[j]; d[o + 12] = partG[j]; d[o + 13] = partB[j];
+            stemDrawCount++;
         }
     }
 
@@ -594,26 +786,36 @@ final class EmptinessScene {
         double[] d;
         int o;
         if (alpha >= 0.998) {
-            int count = opaqueCounts[meshIndex]++;
-            o = count * 8;
+            o = opaqueCounts[meshIndex]++ * DRAW_STRIDE;
             d = opaqueDraws[meshIndex];
-            if (o + 8 > d.length)
+            if (o + DRAW_STRIDE > d.length)
                 d = opaqueDraws[meshIndex] = grow(d);
         } else {
-            int count = transparentCount++;
-            if (count >= transparentMeshes.length) {
-                transparentDraws = grow(transparentDraws);
-                transparentMeshes = growInt(transparentMeshes);
-                transparentOrder = growInt(transparentOrder);
-                transparentDistances = grow(transparentDistances);
-            }
-            transparentMeshes[count] = meshIndex;
-            transparentDistances[count] = distance;
-            o = count * 8;
+            o = newTransparentDraw(meshIndex, distance);
             d = transparentDraws;
         }
         d[o] = vx; d[o + 1] = vy; d[o + 2] = vz; d[o + 3] = size;
         d[o + 4] = rgb[0]; d[o + 5] = rgb[1]; d[o + 6] = rgb[2]; d[o + 7] = alpha;
+    }
+
+    // How much a sphere (center relative to the camera, size) is decomposed into its parts (0 = simple sphere, 1 = only parts)
+    private double compositeAt(double dx, double dy, double dz, double size) {
+        double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return distance < size ? 1 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+    }
+
+    // Allocates a transparent draw and returns its offset in transparentDraws
+    private int newTransparentDraw(int meshCode, double distance) {
+        int count = transparentCount++;
+        if (count >= transparentMeshes.length) {
+            transparentDraws = grow(transparentDraws);
+            transparentMeshes = growInt(transparentMeshes);
+            transparentOrder = growInt(transparentOrder);
+            transparentDistances = grow(transparentDistances);
+        }
+        transparentMeshes[count] = meshCode;
+        transparentDistances[count] = distance;
+        return count * DRAW_STRIDE;
     }
 
     private static double[] grow(double[] array) {
@@ -651,6 +853,22 @@ final class EmptinessScene {
         gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
         return mesh;
+    }
+
+    private StemMesh bindStemMesh(int meshIndex) {
+        StemMesh mesh = stemMeshes[meshIndex];
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.positionBuffer);
+        gl.vertexAttribPointer(aStemPosition, 3, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
+        return mesh;
+    }
+
+    private void drawStem(StemMesh mesh, double[] d, int o) {
+        gl.uniform4f(uStemStart, d[o], d[o + 1], d[o + 2], d[o + 3]);
+        gl.uniform4f(uStemColor, d[o + 4], d[o + 5], d[o + 6], d[o + 7]);
+        gl.uniform3f(uStemEnd, d[o + 8], d[o + 9], d[o + 10]);
+        gl.uniform3f(uStemColorEnd, d[o + 11], d[o + 12], d[o + 13]);
+        gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0);
     }
 
     private void drawSphere(SphereMesh mesh, double[] d, int o) {

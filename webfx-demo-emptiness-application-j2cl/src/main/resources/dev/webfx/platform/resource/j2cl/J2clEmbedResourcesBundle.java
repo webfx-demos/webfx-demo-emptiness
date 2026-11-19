@@ -17,14 +17,18 @@ public interface J2clEmbedResourcesBundle extends ClientBundle {
     @Source("/dev/webfx/demo/emptiness/sphereVertexShader.glsl")
     TextResource r2();
 
-    @Source("/dev/webfx/platform/meta/exe/exe.properties")
+    @Source("/dev/webfx/demo/emptiness/stemVertexShader.glsl")
     TextResource r3();
+
+    @Source("/dev/webfx/platform/meta/exe/exe.properties")
+    TextResource r4();
 
     final class ProvidedJ2clResourceBundle extends WebResourceBundleBase {
         public ProvidedJ2clResourceBundle() {
             registerResource("dev/webfx/demo/emptiness/sphereFragmentShader.glsl", () -> R.r1().getText());
             registerResource("dev/webfx/demo/emptiness/sphereVertexShader.glsl", () -> R.r2().getText());
-            registerResource("dev/webfx/platform/meta/exe/exe.properties", () -> R.r3().getText());
+            registerResource("dev/webfx/demo/emptiness/stemVertexShader.glsl", () -> R.r3().getText());
+            registerResource("dev/webfx/platform/meta/exe/exe.properties", () -> R.r4().getText());
         }
     }
 }

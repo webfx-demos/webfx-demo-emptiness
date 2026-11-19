@@ -9,6 +9,7 @@
     <embed-resources>
         <resource>dev/webfx/demo/emptiness/sphereVertexShader.glsl</resource>
         <resource>dev/webfx/demo/emptiness/sphereFragmentShader.glsl</resource>
+        <resource>dev/webfx/demo/emptiness/stemVertexShader.glsl</resource>
     </embed-resources>
 
     <dependencies>

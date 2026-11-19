@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project applicationId="dev.webfx.demo.emptiness" applicationLabel="Emptiness">
+
+    <exported-packages>
+        <source-packages/>
+        <resource-packages/>
+    </exported-packages>
+
+    <embed-resources>
+        <resource>dev/webfx/demo/emptiness/sphereVertexShader.glsl</resource>
+        <resource>dev/webfx/demo/emptiness/sphereFragmentShader.glsl</resource>
+    </embed-resources>
+
+    <dependencies>
+        <used-by-source-modules/>
+    </dependencies>
+
+    <providers>
+        <provider interface="javafx.application.Application">dev.webfx.demo.emptiness.EmptinessApplication</provider>
+    </providers>
+
+</project>

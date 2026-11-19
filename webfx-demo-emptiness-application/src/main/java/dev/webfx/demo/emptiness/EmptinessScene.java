@@ -60,7 +60,6 @@ final class EmptinessScene {
     private static final int MAX_NODES = 12000;
     // The reveal distance is temporarily reduced when the number of spheres gets close to the maximum
     private static final double BUDGET_HIGH = 0.8 * MAX_NODES, BUDGET_LOW = 0.6 * MAX_NODES;
-    private static final double HUE_SPREAD = 0.14;
 
     private final Canvas canvas;
     private final WebGLRenderingContext gl;
@@ -73,6 +72,7 @@ final class EmptinessScene {
     private int partsCount = 80;
     private double revealDistance = 6, qIn, qOut;
     private double speed = 0.07; // zoom cycles per second
+    private double hueVariety = 0.3; // maximal hue difference between parts of a same sphere (in turns of the color wheel)
     private boolean paused;
 
     // Zoom state
@@ -186,6 +186,14 @@ final class EmptinessScene {
 
     void setSpeed(double speed) {
         this.speed = speed;
+    }
+
+    double getHueVariety() {
+        return hueVariety;
+    }
+
+    void setHueVariety(double hueVariety) {
+        this.hueVariety = hueVariety;
     }
 
     void togglePause() {
@@ -319,8 +327,8 @@ final class EmptinessScene {
         levelsCount++;
     }
 
-    private static double childHue(double parentHue, int childSeed) {
-        return parentHue + (Maths.unit(Maths.hash(childSeed, 1)) - 0.5) * HUE_SPREAD;
+    private double childHue(double parentHue, int childSeed) {
+        return parentHue + (Maths.unit(Maths.hash(childSeed, 1)) - 0.5) * hueVariety;
     }
 
     private static double childSaturation(double parentSaturation, int childSeed) {

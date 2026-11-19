@@ -59,6 +59,8 @@ public final class EmptinessApplication extends Application {
                 v -> emptinessScene.setPartsCount((int) Math.round(v)), v -> Integer.toString((int) Math.round(v)), true);
         addSlider(settings, row++, "Reveal distance", 1.6, 12, emptinessScene.getRevealDistance(),
                 emptinessScene::setRevealDistance, v -> format1(v) + " radii", false);
+        addSlider(settings, row++, "Colour variety", 0, 1, emptinessScene.getHueVariety(),
+                emptinessScene::setHueVariety, v -> (int) Math.round(v * 100) + "%", false);
         addSlider(settings, row++, "Speed", 0, 0.25, emptinessScene.getSpeed(),
                 emptinessScene::setSpeed, v -> format1(v * 60) + " levels/min", false);
         settings.add(statsText, 0, row, 3, 1);

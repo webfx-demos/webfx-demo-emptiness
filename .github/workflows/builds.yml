@@ -472,7 +472,7 @@ jobs:
       ##################################################################################################################
 
       - if: env.GLUON_IOS_APPSTORE_KEY_ID != ''
-        uses: Apple-Actions/upload-testflight-build@master
+        uses: Apple-Actions/upload-testflight-build@v1
         with:
           app-path: staging/${{ env.app-name }}-${{ matrix.gluon-ios-artifact-suffix }}
           issuer-id: ${{ env.GLUON_IOS_APPSTORE_ISSUER_ID }}

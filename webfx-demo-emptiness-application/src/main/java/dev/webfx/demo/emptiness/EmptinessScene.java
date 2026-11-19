@@ -74,7 +74,7 @@ final class EmptinessScene {
 
     // Settings
     // Initial settings = middle of each slider range in EmptinessApplication (except the stems, off by default)
-    private int partsCount = 124;
+    private int partsCount = 254;
     private double revealDistance = 6.8, qIn, qOut;
     private double speed = 0.25; // zoom cycles per second
     private double hueVariety = 0.5; // maximal hue difference between parts of a same sphere (in turns of the color wheel)

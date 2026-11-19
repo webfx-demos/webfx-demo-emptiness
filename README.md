@@ -17,8 +17,9 @@ so on, forever. At no level is there a sphere that exists from its own side, ind
   transparent (its center first, then its rim), so the parts appear without any visible switch.
 - **Infinite zoom**: the camera follows a logarithmic spiral from the sphere to the chosen part, ending when that part
   fills the screen exactly as the sphere did at the start. The coordinates are then rebased (the part becomes the new
-  sphere), so the zoom never runs out of floating point precision. The part to dive into is chosen so that the camera
-  never goes through another part, and consecutive spirals are blended to avoid a jolt when the target changes.
+  sphere), so the zoom never runs out of floating point precision. The part to dive into is a front part, which the
+  camera sees unobstructed during the whole dive, so the camera only flies through empty space (never close to another
+  part or stem). Consecutive spirals are blended to avoid a jolt when the target changes.
 - **Surroundings**: a few ancestors are kept to draw what surrounds the camera; spheres fade out as they become much
   bigger than the current scale, so the oldest ancestor can be dropped without anything visibly disappearing.
 

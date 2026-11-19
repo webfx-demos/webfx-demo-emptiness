@@ -1,15 +1,13 @@
 package dev.webfx.demo.emptiness;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
 /**
  * Chooses which part of a sphere the camera dives into next.
  *
- * <p>To keep the feeling of emptiness, the camera should fly through empty space only: the target is a part on the
- * front of the sphere (facing the camera), which the camera sees unobstructed during the whole dive, and the camera
- * never passes close to another part or stem on its way.</p>
+ * <p>To keep the feeling of emptiness, the camera should fly through empty space only: the target is a part that the
+ * camera sees unobstructed during the whole dive, and the camera never passes close to another part or stem on its way.
+ * Any such part can be chosen, on the front of the sphere or deeper inside when a clear way leads to it.</p>
  *
  * @author Bruno Salmon
  */
@@ -22,9 +20,6 @@ final class TargetChooser {
     // Minimal distances (in part radii) from the camera to the other parts, from the camera to the stems, and from the
     // line of sight to the other parts (the thickest stem is 0.4 r)
     private static final double PART_CLEARANCE = 1.2, STEM_CLEARANCE = 0.6, SIGHT_CLEARANCE = 1.1;
-    // The parts are checked from the closest to the camera, and the target is chosen randomly among the first valid ones
-    // (up to 5, and fewer for spheres with few parts, so the target stays in front)
-    private static final int MAX_FRONT_CANDIDATES = 5;
 
     private TargetChooser() {}
 
@@ -32,21 +27,23 @@ final class TargetChooser {
         int n = layout.n;
         double r = layout.r;
         double partClearance2 = sq(PART_CLEARANCE * r), stemClearance2 = sq(STEM_CLEARANCE * r), sightClearance2 = sq(SIGHT_CLEARANCE * r);
-        // Parts sorted from the closest to the start position (0, 0, d0) = from the front to the back
-        Integer[] order = new Integer[n];
-        double[] distances = new double[n];
-        for (int j = 0; j < n; j++) {
+        // Parts checked in a random order: the first valid one is a random choice among all valid parts
+        int[] order = new int[n];
+        for (int j = 0; j < n; j++)
             order[j] = j;
-            distances[j] = sq(layout.cx[j]) + sq(layout.cy[j]) + sq(d0 - layout.cz[j]);
+        for (int j = n - 1; j > 0; j--) { // Fisher-Yates shuffle
+            int k = random.nextInt(j + 1), t = order[j];
+            order[j] = order[k];
+            order[k] = t;
         }
-        java.util.Arrays.sort(order, (a, b) -> Double.compare(distances[a], distances[b]));
-        int frontCandidates = Math.max(1, Math.min(MAX_FRONT_CANDIDATES, n / 10));
-        List<ZoomPath> valid = new ArrayList<>();
         ZoomPath best = null;
         int bestViolations = Integer.MAX_VALUE;
+        double bestDistance = Double.MAX_VALUE;
         double[] p = new double[3];
-        for (int o = 0; o < n && valid.size() < frontCandidates; o++) {
+        for (int o = 0; o < n; o++) {
             int j = order[o];
+            // Distance from the start position (0, 0, d0) = how far the part is from the front
+            double distance = sq(layout.cx[j]) + sq(layout.cy[j]) + sq(d0 - layout.cz[j]);
             ZoomPath path = new ZoomPath(layout, j, d0);
             int violations = 0;
             // 1) The camera doesn't pass close to another part or stem
@@ -75,14 +72,15 @@ final class TargetChooser {
                 }
             }
             if (violations == 0)
-                valid.add(path);
-            if (violations < bestViolations) { // the front-most one in case of equality (as parts are sorted)
+                return path;
+            // If no part is valid, we take the least bad one (the front-most one in case of equality)
+            if (violations < bestViolations || violations == bestViolations && distance < bestDistance) {
                 bestViolations = violations;
+                bestDistance = distance;
                 best = path;
             }
         }
-        // 3) Choosing randomly among the front-most valid parts (or the least bad one if none is valid)
-        return valid.isEmpty() ? best : valid.get(random.nextInt(valid.size()));
+        return best;
     }
 
     // Squared distance from the point (x, y, z) to the segment between the parts a and b of the layout

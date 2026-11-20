@@ -57,13 +57,16 @@ final class EmptinessScene {
     private static final int MAX_ANCESTORS = 3;
     // Level fog: spheres bigger than the current root by these numbers of levels fade out
     private static final double FOG_START = 1.4, FOG_END = 3.0;
-    // Width of the dissolving zone around the reveal distance (qIn = reveal / factor, qOut = reveal * factor)
+    // Width of the dissolving zone around the reveal q (qIn = reveal q / factor, qOut = reveal q * factor)
     private static final double REVEAL_ZONE_FACTOR = 1.35;
     private static final double MIN_PIXEL_RADIUS = 0.4;
+    // Perspective stretches the spheres away from the view center (a lot on wide windows), so they look bigger - closer -
+    // than spheres at the same distance in the center. Their reveal takes this into account, up to this stretch factor.
+    private static final double MAX_STRETCH = 2.8;
     private static final int MAX_DEPTH = 24;
     // Maximal number of visible spheres considered per frame (drawn or decomposed into parts)
     private static final int MAX_NODES = 12000;
-    // The reveal distance is temporarily reduced when the number of spheres gets close to the maximum
+    // The reveal q is temporarily reduced (spheres reveal when bigger) when the number of spheres gets close to the maximum
     private static final double BUDGET_HIGH = 0.8 * MAX_NODES, BUDGET_LOW = 0.6 * MAX_NODES;
 
     private final Canvas canvas;
@@ -80,7 +83,9 @@ final class EmptinessScene {
     // Settings
     // Initial settings = middle of each slider range in EmptinessApplication (except the stems, off by default)
     private int partsCount = 1000;
-    private double revealDistance = 6.8, qIn, qOut;
+    // A sphere dissolves into its parts when its diameter on screen reaches this fraction of the window height (in the
+    // middle of the dissolving zone), i.e. when q = distance / radius reaches 1 / (revealSize * tan(FIELD_OF_VIEW / 2))
+    private double revealSize = 0.325, qIn, qOut;
     private double speed = 0.25; // zoom cycles per second
     private double hueVariety = 0.5; // the Colour variety setting: 0 = parts of the parent's hue, 1 = HUE_VARIETY_RANGE
     // Maximal hue difference between parts of a same sphere (in turns of the color wheel) for a Colour variety of 100%
@@ -122,7 +127,7 @@ final class EmptinessScene {
     private final double[] nodeX = new double[NODE_CAPACITY], nodeY = new double[NODE_CAPACITY], nodeZ = new double[NODE_CAPACITY];
     private final double[] nodeSize = new double[NODE_CAPACITY], nodeDistance = new double[NODE_CAPACITY], nodePixelRadius = new double[NODE_CAPACITY];
     private final double[] nodeViewX = new double[NODE_CAPACITY], nodeViewY = new double[NODE_CAPACITY], nodeViewZ = new double[NODE_CAPACITY];
-    private final double[] nodeFog = new double[NODE_CAPACITY];
+    private final double[] nodeFog = new double[NODE_CAPACITY], nodeStretch = new double[NODE_CAPACITY];
     private final double[] nodeHue = new double[NODE_CAPACITY], nodeSaturation = new double[NODE_CAPACITY], nodeBrightness = new double[NODE_CAPACITY];
     private final double[] nodeMatrix = new double[NODE_CAPACITY * 9];
     private final int[] nodeSeed = new int[NODE_CAPACITY], nodeDepth = new int[NODE_CAPACITY];
@@ -196,7 +201,7 @@ final class EmptinessScene {
         };
         for (int i = 0; i < 2; i++)
             opaqueStemDraws[i] = new double[DRAW_STRIDE * 1024];
-        setRevealDistance(revealDistance);
+        setRevealSize(revealSize);
         restart();
     }
 
@@ -250,14 +255,15 @@ final class EmptinessScene {
             changeLayouts();
     }
 
-    double getRevealDistance() {
-        return revealDistance;
+    double getRevealSize() {
+        return revealSize;
     }
 
-    void setRevealDistance(double revealDistance) {
-        this.revealDistance = revealDistance;
-        qIn = revealDistance / REVEAL_ZONE_FACTOR;
-        qOut = revealDistance * REVEAL_ZONE_FACTOR;
+    void setRevealSize(double revealSize) {
+        this.revealSize = revealSize;
+        double revealQ = 1 / (revealSize * Math.tan(FIELD_OF_VIEW / 2));
+        qIn = revealQ / REVEAL_ZONE_FACTOR;
+        qOut = revealQ * REVEAL_ZONE_FACTOR;
     }
 
     double getSpeed() {
@@ -543,7 +549,7 @@ final class EmptinessScene {
         }
         while (heapSize > 0)
             process(popNode());
-        // Adapting the reveal distance to the budget (smoothly, so it is not noticeable). A stem costs about half a sphere.
+        // Adapting the reveal size to the budget (smoothly, so it is not noticeable). A stem costs about half a sphere.
         double budgetUsage = nodeCount + 0.5 * stemDrawCount;
         if (budgetUsage > BUDGET_HIGH)
             budgetScale = Math.max(0.25, budgetScale * 0.97);
@@ -663,7 +669,8 @@ final class EmptinessScene {
         double vx = v[0] * dx + v[1] * dy + v[2] * dz;
         double vy = v[3] * dx + v[4] * dy + v[5] * dz;
         double vz = v[6] * dx + v[7] * dy + v[8] * dz;
-        double pixelRadius = inside ? Double.MAX_VALUE : size * focalPixels / distance;
+        double stretch = stretchOf(vz, distance);
+        double pixelRadius = inside ? Double.MAX_VALUE : size * focalPixels / distance * stretch;
         if (!inside && (isOutsideView(vx, vy, vz, size)
                 || pixelRadius < MIN_PIXEL_RADIUS)) // too small to be seen (and so are its parts)
             return;
@@ -676,7 +683,7 @@ final class EmptinessScene {
         nodeX[k] = x; nodeY[k] = y; nodeZ[k] = z; nodeSize[k] = size;
         nodeDistance[k] = distance; nodePixelRadius[k] = pixelRadius;
         nodeViewX[k] = vx; nodeViewY[k] = vy; nodeViewZ[k] = vz;
-        nodeFog[k] = fog; nodeInside[k] = inside; nodeOnChain[k] = onChain; nodeDepth[k] = depth;
+        nodeFog[k] = fog; nodeStretch[k] = stretch; nodeInside[k] = inside; nodeOnChain[k] = onChain; nodeDepth[k] = depth;
         nodeComposite[k] = false; // set by process()
         nodeSeed[k] = seed; nodeHue[k] = hue; nodeSaturation[k] = saturation; nodeBrightness[k] = brightness;
         System.arraycopy(m, mOffset, nodeMatrix, k * 9, 9);
@@ -690,7 +697,7 @@ final class EmptinessScene {
         int depth = nodeDepth[k];
         // How much this sphere is decomposed into its parts (0 = simple sphere, 1 = only parts). With revealTargetOnly,
         // only the spheres on the dive path are decomposed (and the camera never gets inside the others).
-        double composite = inside ? 1 : revealTargetOnly && !nodeOnChain[k] ? 0 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+        double composite = inside ? 1 : revealTargetOnly && !nodeOnChain[k] ? 0 : Maths.clamp01((qOutFrame - distance / size / nodeStretch[k]) / (qOutFrame - qInFrame));
         SphereLayout layout = layoutOf(nodeSeed[k]);
         if (composite > 0 && (depth >= MAX_DEPTH || nodeCount + layout.n > NODE_CAPACITY)) {
             if (inside)
@@ -856,7 +863,21 @@ final class EmptinessScene {
     // (0 = simple sphere, 1 = only parts), same rule as in process()
     private double compositeAt(boolean onChain, double dx, double dy, double dz, double size) {
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        return distance < size ? 1 : revealTargetOnly && !onChain ? 0 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+        if (distance < size)
+            return 1;
+        if (revealTargetOnly && !onChain)
+            return 0;
+        double[] v = view;
+        double stretch = stretchOf(v[6] * dx + v[7] * dy + v[8] * dz, distance);
+        return Maths.clamp01((qOutFrame - distance / size / stretch) / (qOutFrame - qInFrame));
+    }
+
+    // How much bigger a sphere (view space depth, distance from the camera) looks on screen than if it were in the view
+    // center at the same distance. Its image is an ellipse stretched by 1 / cos(a) across and 1 / cos²(a) along the
+    // direction from the center (a = angle from the view axis), so its area is 1 / cos³(a) bigger.
+    private static double stretchOf(double vz, double distance) {
+        double cos = -vz / distance;
+        return cos <= 0 ? MAX_STRETCH : Math.min(MAX_STRETCH, 1 / Math.pow(cos, 1.5));
     }
 
     // Allocates a transparent draw and returns its offset in transparentDraws

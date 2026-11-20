@@ -11,10 +11,11 @@ so on, forever. At no level is there a sphere that exists from its own side, ind
 - **Composition**: a sphere is made of `N` smaller spheres (the *Parts per sphere* setting), packed inside it so they
   fill about 27% of its volume. From far they merge into the appearance of one sphere; from close the space between
   them shows. Each part has its own rotation, so the parts of a part are not just a scaled copy of the same arrangement.
-- **Reveal**: each sphere is drawn according to `q = camera distance / sphere radius`. Far away (`q` above the *Reveal
-  distance* × 1.35), it is a simple solid sphere and its parts are not even computed. Close (`q` below the reveal
-  distance / 1.35), only its parts are drawn. In between, its parts are drawn inside it and the sphere becomes
-  transparent (its center first, then its rim), so the parts appear without any visible switch. With the *Reveal target
+- **Reveal**: each sphere is drawn according to how big it looks on screen (its diameter relative to the window
+  height, taking into account the perspective stretch near the window edges). While it looks smaller than the *Reveal
+  size* / 1.35, it is a simple solid sphere and its parts are not even computed. Once it looks bigger than the reveal
+  size × 1.35, only its parts are drawn. In between, its parts are drawn inside it and the sphere becomes transparent
+  (its center first, then its rim), so the parts appear without any visible switch. With the *Reveal target
   only* setting, only the spheres on the dive path (the sphere the camera dives into, and the one it will dive into
   next) reveal their parts this way; the others stay simple spheres, as the camera never gets close to them. This keeps
   the number of spheres to draw low, even with thousands of parts per sphere.

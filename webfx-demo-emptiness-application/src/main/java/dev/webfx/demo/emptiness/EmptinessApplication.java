@@ -59,8 +59,9 @@ public final class EmptinessApplication extends Application {
                 v -> emptinessScene.setPartsCount((int) Math.round(v)), v -> Integer.toString((int) Math.round(v)));
         addSlider(settings, row++, "Spacing", 0, 1, emptinessScene.getSpacing(),
                 emptinessScene::setSpacing, v -> (int) Math.round(v * 100) + "%");
-        addSlider(settings, row++, "Reveal distance", 1.6, 12, emptinessScene.getRevealDistance(),
-                emptinessScene::setRevealDistance, v -> format1(v) + " radii");
+        // Reveal size: how big (diameter, in % of the window height, shown as "% of window") a sphere looks when it dissolves into its parts
+        addSlider(settings, row++, "Reveal size", 0.10, 0.55, emptinessScene.getRevealSize(),
+                emptinessScene::setRevealSize, v -> (int) Math.round(v * 100) + "% of window");
         addSlider(settings, row++, "Colour variety", 0, 1, emptinessScene.getHueVariety(),
                 emptinessScene::setHueVariety, v -> (int) Math.round(v * 100) + "%");
         addSlider(settings, row++, "Speed", 0, 0.5, emptinessScene.getSpeed(),

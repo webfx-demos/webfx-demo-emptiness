@@ -30,6 +30,9 @@ import java.util.Random;
  * </ul>
  * The parts fit inside their sphere, so they are hidden as long as the sphere is opaque, and are progressively revealed
  * as it dissolves. Because the same rule applies at every level, no sphere is ever found that is more than an appearance.
+ * With the "Reveal target only" setting, this rule is applied only to the spheres on the dive path (the ancestors, the
+ * root, the target and the target's own target), and the other spheres always stay simple spheres: the camera never
+ * gets close to them, and this keeps the number of spheres to draw low, even with many parts per sphere.
  *
  * <h3>Ancestors</h3>
  * The camera is inside the ancestors of the root, which are therefore always decomposed into their parts. A few
@@ -76,7 +79,7 @@ final class EmptinessScene {
 
     // Settings
     // Initial settings = middle of each slider range in EmptinessApplication (except the stems, off by default)
-    private int partsCount = 500;
+    private int partsCount = 1000;
     private double revealDistance = 6.8, qIn, qOut;
     private double speed = 0.25; // zoom cycles per second
     private double hueVariety = 0.5; // the Colour variety setting: 0 = parts of the parent's hue, 1 = HUE_VARIETY_RANGE
@@ -84,6 +87,7 @@ final class EmptinessScene {
     private static final double HUE_VARIETY_RANGE = 0.8;
     private double spacing = 0.5; // 0 = parts tightly packed, 1 = sparse (see SphereLayout)
     private double stemThickness = 0; // 0 = no stems (default), 1 = stem radius = 40% of the sphere radius
+    private boolean revealTargetOnly; // true = only the spheres on the dive path reveal their parts (less GPU usage)
     private boolean paused;
 
     // Zoom state
@@ -105,6 +109,11 @@ final class EmptinessScene {
     private final double[] view = new double[9]; // world -> view rotation
     private double camX, camY, camZ, sigma, focalPixels, cosV, sinV, cosH, sinH;
     private final double[] cameraMatrix = new double[9];
+    // The dive path in the current frame: the part index to follow at each depth, from the oldest ancestor down to the
+    // root (depth = ancestors count), its target and the target's own target. With revealTargetOnly, only the spheres on
+    // it reveal their parts.
+    private final int[] chainChildIndex = new int[MAX_ANCESTORS + 3];
+    private int chainLength;
     private double budgetScale = 1, qInFrame, qOutFrame;
 
     // Spheres considered in the current frame (visible ones only), processed from the biggest on screen to the
@@ -265,6 +274,14 @@ final class EmptinessScene {
 
     void setHueVariety(double hueVariety) {
         this.hueVariety = hueVariety;
+    }
+
+    boolean isRevealTargetOnly() {
+        return revealTargetOnly;
+    }
+
+    void setRevealTargetOnly(boolean revealTargetOnly) {
+        this.revealTargetOnly = revealTargetOnly;
     }
 
     double getStemThickness() {
@@ -513,8 +530,13 @@ final class EmptinessScene {
         qOutFrame = qOut * budgetScale;
         qInFrame = Math.min(qOutFrame * 0.9, Math.max(1.05, qIn * budgetScale));
         nodeCount = heapSize = 0;
+        chainLength = 0;
+        for (Frame f : ancestors)
+            chainChildIndex[chainLength++] = f.childIndex;
+        chainChildIndex[chainLength++] = currentPath.childIndex;
+        chainChildIndex[chainLength++] = nextPath.childIndex;
         if (ancestors.isEmpty()) {
-            consider(0, 0, 0, 1, IDENTITY, 0, 0, false, rootSeed, rootHue, rootSaturation, rootBrightness);
+            consider(0, 0, 0, 1, IDENTITY, 0, 0, true, rootSeed, rootHue, rootSaturation, rootBrightness);
         } else {
             Frame top = ancestors.get(0);
             consider(top.x, top.y, top.z, top.size, top.m, 0, 0, true, top.seed, top.hue, top.saturation, top.brightness);
@@ -666,8 +688,9 @@ final class EmptinessScene {
         double size = nodeSize[k], distance = nodeDistance[k];
         boolean inside = nodeInside[k];
         int depth = nodeDepth[k];
-        // How much this sphere is decomposed into its parts (0 = simple sphere, 1 = only parts)
-        double composite = inside ? 1 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+        // How much this sphere is decomposed into its parts (0 = simple sphere, 1 = only parts). With revealTargetOnly,
+        // only the spheres on the dive path are decomposed (and the camera never gets inside the others).
+        double composite = inside ? 1 : revealTargetOnly && !nodeOnChain[k] ? 0 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
         SphereLayout layout = layoutOf(nodeSeed[k]);
         if (composite > 0 && (depth >= MAX_DEPTH || nodeCount + layout.n > NODE_CAPACITY)) {
             if (inside)
@@ -688,7 +711,7 @@ final class EmptinessScene {
             double x = nodeX[k], y = nodeY[k], z = nodeZ[k];
             int seed = nodeSeed[k];
             double hue = nodeHue[k], saturation = nodeSaturation[k], brightness = nodeBrightness[k];
-            Frame ancestor = nodeOnChain[k] && depth < ancestors.size() ? ancestors.get(depth) : null;
+            int chainChild = nodeOnChain[k] && depth < chainLength ? chainChildIndex[depth] : -1;
             double[] m = partMatrix, nm = nodeMatrix;
             int o = k * 9;
             double partSize = size * layout.r;
@@ -706,7 +729,7 @@ final class EmptinessScene {
                 }
                 int partSeed = Maths.hash(seed, i);
                 double partHue = childHue(hue, partSeed), partSaturation = childSaturation(saturation, partSeed), partBrightness = childBrightness(brightness, partSeed);
-                consider(px, py, pz, partSize, m, 0, depth + 1, ancestor != null && i == ancestor.childIndex, partSeed,
+                consider(px, py, pz, partSize, m, 0, depth + 1, i == chainChild, partSeed,
                         partHue, partSaturation, partBrightness);
                 if (stemThickness > 0) {
                     partX[i] = px; partY[i] = py; partZ[i] = pz;
@@ -715,12 +738,12 @@ final class EmptinessScene {
                 }
             }
             if (stemThickness > 0)
-                addStems(layout, partSize, depth + 1);
+                addStems(layout, partSize, depth + 1, chainChild);
         }
     }
 
     // Collects the stems between the parts (positions & colors in partX... arrays) of the sphere being decomposed
-    private void addStems(SphereLayout layout, double partSize, int partsDepth) {
+    private void addStems(SphereLayout layout, double partSize, int partsDepth, int chainChild) {
         double level = levelOf(partsDepth);
         double fog = 1 - Maths.smoothstep((level - FOG_START) / (FOG_END - FOG_START)); // same fog as the parts
         if (fog <= 0.002)
@@ -746,7 +769,7 @@ final class EmptinessScene {
             if (isOutsideView(vmx, vmy, vmz, halfLength + radius))
                 continue;
             // The stem dissolves with its parts (when they dissolve into their own parts)
-            double alpha = fog * (1 - Maths.smoothstep(Math.max(compositeAt(ax, ay, az, partSize), compositeAt(bx, by, bz, partSize))));
+            double alpha = fog * (1 - Maths.smoothstep(Math.max(compositeAt(i == chainChild, ax, ay, az, partSize), compositeAt(j == chainChild, bx, by, bz, partSize))));
             if (alpha <= 0.002)
                 continue;
             double pixelRadius = radius * focalPixels / Math.max(distance - halfLength, 1e-9);
@@ -829,10 +852,11 @@ final class EmptinessScene {
         d[o + 4] = rgb[0]; d[o + 5] = rgb[1]; d[o + 6] = rgb[2]; d[o + 7] = alpha;
     }
 
-    // How much a sphere (center relative to the camera, size) is decomposed into its parts (0 = simple sphere, 1 = only parts)
-    private double compositeAt(double dx, double dy, double dz, double size) {
+    // How much a sphere (on the dive path or not, center relative to the camera, size) is decomposed into its parts
+    // (0 = simple sphere, 1 = only parts), same rule as in process()
+    private double compositeAt(boolean onChain, double dx, double dy, double dz, double size) {
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        return distance < size ? 1 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
+        return distance < size ? 1 : revealTargetOnly && !onChain ? 0 : Maths.clamp01((qOutFrame - distance / size) / (qOutFrame - qInFrame));
     }
 
     // Allocates a transparent draw and returns its offset in transparentDraws

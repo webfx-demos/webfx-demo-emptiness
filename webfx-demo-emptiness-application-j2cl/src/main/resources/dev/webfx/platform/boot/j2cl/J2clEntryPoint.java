@@ -34,6 +34,8 @@ public final class J2clEntryPoint implements ApplicationBooterProvider {
         register(dev.webfx.platform.resource.spi.impl.web.WebResourceBundle.class, dev.webfx.platform.resource.j2cl.J2clEmbedResourcesBundle.ProvidedJ2clResourceBundle::new);
         register(dev.webfx.platform.scheduler.spi.SchedulerProvider.class, dev.webfx.platform.uischeduler.spi.impl.elemental2.Elemental2UiSchedulerProvider::new);
         register(dev.webfx.platform.shutdown.spi.ShutdownProvider.class, dev.webfx.platform.shutdown.spi.impl.elemental2.Elemental2ShutdownProvider::new);
+        register(dev.webfx.platform.storage.spi.LocalStorageProvider.class, dev.webfx.platform.storage.spi.impl.elemental2.Elemental2LocalStorageProvider::new);
+        register(dev.webfx.platform.storage.spi.SessionStorageProvider.class, dev.webfx.platform.storage.spi.impl.elemental2.Elemental2SessionStorageProvider::new);
         register(dev.webfx.platform.typedarray.spi.TypedArrayFactoryProvider.class, dev.webfx.platform.typedarray.spi.impl.elemental2.Elemental2TypedArrayFactoryProvider::new);
         register(dev.webfx.platform.uischeduler.spi.UiSchedulerProvider.class, dev.webfx.platform.uischeduler.spi.impl.elemental2.Elemental2UiSchedulerProvider::new);
         register(dev.webfx.platform.useragent.spi.UserAgentProvider.class, dev.webfx.platform.useragent.spi.impl.elemental2.Elemental2UserAgentProvider::new);

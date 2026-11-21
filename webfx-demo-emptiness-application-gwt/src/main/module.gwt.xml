@@ -191,6 +191,11 @@
     <source path="dev/webfx/platform/shutdown/spi/impl"/>
     <!--=======================< webfx-platform-shutdown-elemental2 >=======================-->
     <source path="dev/webfx/platform/shutdown/spi/impl/elemental2"/>
+    <!--=============================< webfx-platform-storage >=============================-->
+    <source path="dev/webfx/platform/storage"/>
+    <source path="dev/webfx/platform/storage/spi"/>
+    <!--=======================< webfx-platform-storage-elemental2 >========================-->
+    <source path="dev/webfx/platform/storage/spi/impl/elemental2"/>
     <!--===========================< webfx-platform-typedarray >============================-->
     <source path="dev/webfx/platform/typedarray"/>
     <source path="dev/webfx/platform/typedarray/spi"/>

@@ -1,5 +1,6 @@
 package dev.webfx.demo.emptiness;
 
+import dev.webfx.platform.storage.LocalStorage;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.geometry.Insets;
@@ -55,25 +56,30 @@ public final class EmptinessApplication extends Application {
         settings.setHgap(12);
         settings.setVgap(8);
         int row = 0;
-        addSlider(settings, row++, "Parts per sphere", 8, 2000, emptinessScene.getPartsCount(),
+        addSlider(settings, row++, "partsCount", "Parts per sphere", 8, 2000, emptinessScene.getPartsCount(),
                 v -> emptinessScene.setPartsCount((int) Math.round(v)), v -> Integer.toString((int) Math.round(v)));
-        addSlider(settings, row++, "Spacing", 0, 1, emptinessScene.getSpacing(),
+        addSlider(settings, row++, "spacing", "Spacing", 0, 1, emptinessScene.getSpacing(),
                 emptinessScene::setSpacing, v -> (int) Math.round(v * 100) + "%");
-        addSlider(settings, row++, "Colour variety", 0, 1, emptinessScene.getHueVariety(),
+        addSlider(settings, row++, "hueVariety", "Colour variety", 0, 1, emptinessScene.getHueVariety(),
                 emptinessScene::setHueVariety, v -> (int) Math.round(v * 100) + "%");
-        addSlider(settings, row++, "Speed", 0, 0.5, emptinessScene.getSpeed(),
+        addSlider(settings, row++, "speed", "Speed", 0, 0.5, emptinessScene.getSpeed(),
                 emptinessScene::setSpeed, v -> format1(v * 60) + " levels/min");
         // Stems: 0 (the default) = no stems
-        addSlider(settings, row++, "Stem thickness", 0, 1, emptinessScene.getStemThickness(),
+        addSlider(settings, row++, "stemThickness", "Stem thickness", 0, 1, emptinessScene.getStemThickness(),
                 emptinessScene::setStemThickness, v -> (int) Math.round(v * 100) + "%");
         // Reveal size: how big (diameter, in % of the window height, shown as "% of window") a sphere looks when it dissolves into its parts
-        addSlider(settings, row++, "Reveal size", 0.10, 0.55, emptinessScene.getRevealSize(),
+        addSlider(settings, row++, "revealSize", "Reveal size", 0.10, 0.55, emptinessScene.getRevealSize(),
                 emptinessScene::setRevealSize, v -> (int) Math.round(v * 100) + "% of window");
         // Reveal target only: only the spheres on the dive path reveal their parts (less GPU usage with many parts)
         Switch revealTargetOnlySwitch = new Switch();
         revealTargetOnlySwitch.setCursor(Cursor.HAND);
-        revealTargetOnlySwitch.setSelected(emptinessScene.isRevealTargetOnly());
-        revealTargetOnlySwitch.selectedProperty().addListener((observable, oldValue, selected) -> emptinessScene.setRevealTargetOnly(selected));
+        boolean revealTargetOnly = loadSetting("revealTargetOnly", emptinessScene.isRevealTargetOnly() ? 1 : 0, 0, 1) == 1;
+        emptinessScene.setRevealTargetOnly(revealTargetOnly);
+        revealTargetOnlySwitch.setSelected(revealTargetOnly);
+        revealTargetOnlySwitch.selectedProperty().addListener((observable, oldValue, selected) -> {
+            emptinessScene.setRevealTargetOnly(selected);
+            saveSetting("revealTargetOnly", selected ? 1 : 0);
+        });
         settings.addRow(row++, createText("Reveal target only", Font.font("Helvetica", 13), TEXT_COLOR), revealTargetOnlySwitch);
         settings.add(statsText, 0, row, 3, 1);
         settings.setPadding(new Insets(14));
@@ -143,8 +149,13 @@ public final class EmptinessApplication extends Application {
         primaryStage.show();
     }
 
-    private static Slider addSlider(GridPane grid, int row, String label, double min, double max, double value,
+    // The settings are remembered in the local storage (the value stored for a setting is applied at startup, and saved
+    // again each time the setting changes)
+    private static Slider addSlider(GridPane grid, int row, String key, String label, double min, double max, double defaultValue,
                                   DoubleConsumer setter, DoubleFunction<String> formatter) {
+        double value = loadSetting(key, defaultValue, min, max);
+        if (value != defaultValue)
+            setter.accept(value);
         Text labelText = createText(label, Font.font("Helvetica", 13), TEXT_COLOR);
         Text valueText = createText(formatter.apply(value), Font.font("Helvetica", 13), DIM_TEXT_COLOR);
         Slider slider = new Slider(min, max, value);
@@ -152,9 +163,34 @@ public final class EmptinessApplication extends Application {
         slider.valueProperty().addListener((observable, oldValue, newValue) -> {
             valueText.setText(formatter.apply(newValue.doubleValue()));
             setter.accept(newValue.doubleValue());
+            saveSetting(key, newValue.doubleValue());
         });
         grid.addRow(row, labelText, slider, valueText);
         return slider;
+    }
+
+    private static final String STORAGE_KEY_PREFIX = "emptiness.";
+
+    // Returns the value stored for that setting (within min and max), or the default value if none (or if the local
+    // storage is not available, for example in some private browsing modes)
+    private static double loadSetting(String key, double defaultValue, double min, double max) {
+        try {
+            String stored = LocalStorage.getItem(STORAGE_KEY_PREFIX + key);
+            if (stored != null) {
+                double value = Double.parseDouble(stored);
+                if (!Double.isNaN(value))
+                    return Math.max(min, Math.min(max, value));
+            }
+        } catch (Exception e) { // no local storage, or not a number => default value
+        }
+        return defaultValue;
+    }
+
+    private static void saveSetting(String key, double value) {
+        try {
+            LocalStorage.setItem(STORAGE_KEY_PREFIX + key, Double.toString(value));
+        } catch (Exception e) { // no local storage => the setting is just not remembered
+        }
     }
 
     private static Text createText(String text, Font font, Color color) {

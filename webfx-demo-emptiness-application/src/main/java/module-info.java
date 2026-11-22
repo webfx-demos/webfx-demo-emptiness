@@ -6,6 +6,7 @@ module webfx.demo.emptiness.application {
     requires javafx.base;
     requires javafx.controls;
     requires javafx.graphics;
+    requires webfx.kit.launcher;
     requires webfx.kit.webgl;
     requires webfx.platform.console;
     requires webfx.platform.resource;

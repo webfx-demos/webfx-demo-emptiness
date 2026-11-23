@@ -15,10 +15,7 @@ so on, forever. At no level is there a sphere that exists from its own side, ind
   height, taking into account the perspective stretch near the window edges). While it looks smaller than the *Reveal
   size* / 1.35, it is a simple solid sphere and its parts are not even computed. Once it looks bigger than the reveal
   size × 1.35, only its parts are drawn. In between, its parts are drawn inside it and the sphere becomes transparent
-  (its center first, then its rim), so the parts appear without any visible switch. With the *Reveal target
-  only* setting, only the spheres on the dive path (the sphere the camera dives into, and the one it will dive into
-  next) reveal their parts this way; the others stay simple spheres, as the camera never gets close to them. This keeps
-  the number of spheres to draw low, even with thousands of parts per sphere.
+  (its center first, then its rim), so the parts appear without any visible switch.
 - **Infinite zoom**: the camera follows a logarithmic spiral from the sphere to the chosen part, ending when that part
   fills the screen exactly as the sphere did at the start. The coordinates are then rebased (the part becomes the new
   sphere), so the zoom never runs out of floating point precision. The part to dive into is chosen randomly among the

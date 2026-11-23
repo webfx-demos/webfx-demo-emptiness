@@ -202,7 +202,7 @@ public final class EmptinessApplication extends Application {
             "partsCount=2000;spacing=1;hueVariety=0.5;speed=0.28;stemThickness=0;revealSize=0.36",
     };
     private static final int PRESETS_COUNT = DEFAULT_PRESETS.length;
-    private static final int FIRST_START_PRESET = 2; // the preset applied when no setting is saved yet
+    private static final int FIRST_START_PRESET = 3; // the preset applied when no setting is saved yet
     private static final Background PRESET_BACKGROUND = presetBackground(Color.rgb(255, 255, 255, 0.12));
     private static final Background PRESET_SELECTED_BACKGROUND = presetBackground(Color.rgb(10, 132, 255));
     private static final Background PRESET_SAVED_BACKGROUND = presetBackground(Color.rgb(80, 200, 120, 0.8));

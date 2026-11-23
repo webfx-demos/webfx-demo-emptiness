@@ -22,7 +22,8 @@ so on, forever. At no level is there a sphere that exists from its own side, ind
   parts the camera can reach through empty space (never close to another part or stem) while seeing it unobstructed
   once it is big enough to be noticed. When the spiral to a part is blocked, the camera can take a curved path: a
   sideways detour, back on the spiral at both ends, during which the camera turns to keep the part where the spiral
-  would show it. This lets the camera reach parts deep inside the sphere, hidden behind others at first. Consecutive
+  would show it. This lets the camera reach parts deep inside the sphere, hidden behind others at first. The deeper
+  parts are also preferred when choosing, so that about half of the dives go inside the sphere. Consecutive
   spirals are blended to avoid a jolt when the target changes.
 - **Surroundings**: a few ancestors are kept to draw what surrounds the camera; spheres fade out as they become much
   bigger than the current scale, so the oldest ancestor can be dropped without anything visibly disappearing.

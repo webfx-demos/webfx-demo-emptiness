@@ -1,5 +1,6 @@
 package dev.webfx.demo.emptiness;
 
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -9,7 +10,7 @@ import java.util.Random;
  * camera sees unobstructed during the dive (once it is big enough to be noticed), and the camera never passes close to
  * another part or stem on its way. Any such part can be chosen, on the front of the sphere or deeper inside when a
  * clear way leads to it. When the spiral path to a part is blocked, curved paths (detours) are tried, so that parts
- * hidden behind others can be reached too.</p>
+ * hidden behind others can be reached too. The deeper parts are preferred, so that the camera often dives inside.</p>
  *
  * @author Bruno Salmon
  */
@@ -30,20 +31,26 @@ final class TargetChooser {
     // Detours are tried for that number of parts at most (in the random order), to keep the choice fast (trying more
     // doesn't reach more inner parts in practice, but can make the choice more than twice slower with many parts)
     private static final int DETOUR_PARTS = 4;
+    // How much the deeper parts are preferred: a part at the center is e^DEPTH_BIAS (~20) times more likely to be chosen
+    // than a part at the surface (if both can be reached). With 3, about half of the dives go into the inner 60% of the
+    // sphere (about 20% without the bias, as the outer layers hold most of the parts)
+    private static final double DEPTH_BIAS = 3;
 
     private TargetChooser() {}
 
     static ZoomPath choosePath(SphereLayout layout, double d0, Random random) {
         int n = layout.n;
-        // Parts checked in a random order: the first valid one is a random choice among all valid parts
-        int[] order = new int[n];
-        for (int j = 0; j < n; j++)
+        // Parts checked in a random order: the first valid one is a random choice among all valid parts. The order is
+        // biased towards the deeper parts (weighted random order: each part gets a random key -log(u) / weight, and the
+        // parts are checked by increasing key), as most parts are near the surface (where most of the volume is).
+        double[] keys = new double[n];
+        Integer[] order = new Integer[n];
+        for (int j = 0; j < n; j++) {
+            double depth = Maths.clamp01(1 - Math.sqrt(sq(layout.cx[j]) + sq(layout.cy[j]) + sq(layout.cz[j])) / (1 - layout.r));
+            keys[j] = -Math.log(1 - random.nextDouble()) / Math.exp(DEPTH_BIAS * depth);
             order[j] = j;
-        for (int j = n - 1; j > 0; j--) { // Fisher-Yates shuffle
-            int k = random.nextInt(j + 1), t = order[j];
-            order[j] = order[k];
-            order[k] = t;
         }
+        Arrays.sort(order, (j1, j2) -> Double.compare(keys[j1], keys[j2]));
         ZoomPath best = null;
         int bestViolations = Integer.MAX_VALUE;
         double bestDistance = Double.MAX_VALUE;
